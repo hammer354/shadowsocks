@@ -258,7 +258,7 @@ class UDPRelay(object):
                             (self._listen_addr, self._listen_port))
         af, socktype, proto, canonname, sa = addrs[0]
         server_socket = socket.socket(af, socktype, proto)
-        server_socket.bind((self._listen_addr, self._listen_port))
+        server_socket.bind(sa)
         server_socket.setblocking(False)
         self._server_socket = server_socket
         self._stat_callback = stat_callback
