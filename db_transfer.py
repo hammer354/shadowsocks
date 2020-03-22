@@ -468,6 +468,7 @@ class DbTransfer(object):
 
         if self.is_relay:
             self.relay_rule_list = {}
+            temp_relay_rules = {}
 
             keys_detect = ['id', 'user_id', 'dist_ip', 'port', 'priority']
 
@@ -484,9 +485,55 @@ class DbTransfer(object):
                 d['dist_ip'] = str(r[2])
                 d['port'] = int(r[3])
                 d['priority'] = int(r[4])
-                self.relay_rule_list[d['id']] = d
+
+                # 按照用户ID=>端口对中转规则分组
+                if d['user_id'] not in temp_relay_rules:
+                    temp_relay_rules[d['user_id']] = {}
+                if d['port'] not in temp_relay_rules[d['user_id']]:
+                    temp_relay_rules[d['user_id']][d['port']] = {}
+                temp_relay_rules[d['user_id']][d['port']][d['id']] = d
 
             cur.close()
+
+            # 对每个用户的每个端口选出优先级最高的中转规则
+            # 所有用户所有端口：不比较
+            # 所有用户当前端口：比较所有用户所有端口
+            # 当前用户所有端口：比较所有用户所有端口
+            # 当前用户当前端口：比较当前用户所有端口和所有用户当前端口，两者都不存在时比较所有用户所有端口。
+            for user_id in temp_relay_rules:
+                for port in temp_relay_rules[user_id]:
+                    # 需要比较当前用户的当前端口
+                    comparing_relay_rules = [temp_relay_rules[user_id][port]]
+                    # 当前端口不为所有端口时，需要比较当前用户的所有端口。
+                    if port != 0 and 0 in temp_relay_rules[user_id]:
+                        comparing_relay_rules.append(temp_relay_rules[user_id][0])
+                    # 当前用户不为所有用户时，需要比较所有用户。
+                    if user_id != 0 and 0 in temp_relay_rules:
+                        # 需要比较所有用户的当前端口
+                        if port in temp_relay_rules[0]:
+                            comparing_relay_rules.append(temp_relay_rules[0][port])
+                        # 当前用户不为所有端口，且当前用户的所有端口和所有用户的当前端口不存在时，需要比较所有用户的所有端口。
+                        if port != 0 and 0 not in temp_relay_rules[user_id] and port not in temp_relay_rules[0] and 0 in \
+                                temp_relay_rules[0]:
+                            comparing_relay_rules.append(temp_relay_rules[0][0])
+
+                    # 比较中转规则
+                    match_rule = None
+                    for relay_rules in comparing_relay_rules:
+                        for rule_id in relay_rules:
+                            if match_rule is None:
+                                match_rule = relay_rules[rule_id]
+                            else:
+                                if relay_rules[rule_id]['priority'] > match_rule['priority'] or (
+                                        relay_rules[rule_id]['priority'] == match_rule['priority'] and
+                                        relay_rules[rule_id]['id'] < match_rule['id']):
+                                    match_rule = relay_rules[rule_id]
+
+                    # 如果当前用户的当前端口有选出中转规则，按照用户ID=>端口保存。
+                    if match_rule is not None and match_rule['user_id'] == user_id and match_rule['port'] == port:
+                        if user_id not in self.relay_rule_list:
+                            self.relay_rule_list[user_id] = {}
+                        self.relay_rule_list[user_id][port] = match_rule
 
         conn.close()
         return rows
@@ -628,6 +675,7 @@ class DbTransfer(object):
 
             if self.is_relay and row['is_multi_user'] != 2:
                 temp_relay_rules = {}
+                '''
                 for id in self.relay_rule_list:
                     if ((self.relay_rule_list[id]['user_id'] == user_id or self.relay_rule_list[id]['user_id'] == 0) or row[
                             'is_multi_user'] != 0) and (self.relay_rule_list[id]['port'] == 0 or self.relay_rule_list[id]['port'] == port):
@@ -640,7 +688,7 @@ class DbTransfer(object):
                                     self.relay_rule_list[priority_id]['user_id'] == user_id or self.relay_rule_list[priority_id]['user_id'] == 0) and (
                                     self.relay_rule_list[priority_id]['port'] == port or self.relay_rule_list[priority_id]['port'] == 0):
                                 has_higher_priority = True
-                                continue
+                                break
 
                         if has_higher_priority:
                             continue
@@ -649,6 +697,40 @@ class DbTransfer(object):
                             continue
 
                         temp_relay_rules[id] = self.relay_rule_list[id]
+                '''
+
+                # 处理普通端口
+                if row['is_multi_user'] == 0:
+                    match_rule = None
+                    # 匹配当前用户
+                    if user_id in self.relay_rule_list:
+                        # 匹配当前端口
+                        if port in self.relay_rule_list[user_id]:
+                            match_rule = self.relay_rule_list[user_id][port]
+                        # 匹配所有端口
+                        elif 0 in self.relay_rule_list[user_id]:
+                            match_rule = self.relay_rule_list[user_id][0]
+                    # 匹配所有用户
+                    elif 0 in self.relay_rule_list:
+                        # 匹配当前端口
+                        if port in self.relay_rule_list[0]:
+                            match_rule = self.relay_rule_list[0][port]
+                        # 匹配所有端口
+                        elif 0 in self.relay_rule_list[0]:
+                            match_rule = self.relay_rule_list[0][0]
+
+                    if match_rule is not None and match_rule['dist_ip'] != '0.0.0.0':
+                        temp_relay_rules[user_id] = match_rule
+                # 处理单端口多用户
+                else:
+                    # 对每个用户选出优先级最高的中转规则
+                    for rule_user_id in self.relay_rule_list:
+                        # 匹配当前端口
+                        if port in self.relay_rule_list[rule_user_id]:
+                            temp_relay_rules[rule_user_id] = self.relay_rule_list[rule_user_id][port]
+                        # 匹配所有端口
+                        elif 0 in self.relay_rule_list[rule_user_id]:
+                            temp_relay_rules[rule_user_id] = self.relay_rule_list[rule_user_id][0]
 
                 cfg['relay_rules'] = temp_relay_rules.copy()
             else:
@@ -697,6 +779,7 @@ class DbTransfer(object):
                             port].modify_multi_user_table(md5_users)
 
                 if self.is_relay and row['is_multi_user'] != 2:
+                    '''
                     temp_relay_rules = {}
                     for id in self.relay_rule_list:
                         if ((self.relay_rule_list[id]['user_id'] == user_id or self.relay_rule_list[id]['user_id'] == 0) or row[
@@ -710,7 +793,7 @@ class DbTransfer(object):
                                         self.relay_rule_list[priority_id]['user_id'] == user_id or self.relay_rule_list[priority_id]['user_id'] == 0) and (
                                         self.relay_rule_list[priority_id]['port'] == port or self.relay_rule_list[priority_id]['port'] == 0):
                                     has_higher_priority = True
-                                    continue
+                                    break
 
                             if has_higher_priority:
                                 continue
@@ -720,6 +803,7 @@ class DbTransfer(object):
                                 continue
 
                             temp_relay_rules[id] = self.relay_rule_list[id]
+                    '''
 
                     if port in ServerPool.get_instance().tcp_servers_pool:
                         ServerPool.get_instance().tcp_servers_pool[
@@ -735,7 +819,9 @@ class DbTransfer(object):
                             port].push_relay_rules(temp_relay_rules)
 
                 else:
+                    '''
                     temp_relay_rules = {}
+                    '''
 
                     if port in ServerPool.get_instance().tcp_servers_pool:
                         ServerPool.get_instance().tcp_servers_pool[

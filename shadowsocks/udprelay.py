@@ -362,12 +362,21 @@ class UDPRelay(object):
             self.wrong_iplist[client_address[0]] = time.time()
 
     def _get_relay_host(self, client_address, ogn_data):
+        '''
         for id in self._relay_rules:
             if self._relay_rules[id]['port'] == 0:
                 port = self._listen_port
             else:
                 port = self._relay_rules[id]['port']
             return (self._relay_rules[id]['dist_ip'], int(port))
+        '''
+
+        for user_id in self._relay_rules:
+            if self._relay_rules[user_id]['port'] == 0:
+                port = self._listen_port
+            else:
+                port = self._relay_rules[user_id]['port']
+            return (self._relay_rules[user_id]['dist_ip'], int(port))
         return (None, None)
 
     def _handel_normal_relay(self, client_address, ogn_data):
@@ -384,9 +393,10 @@ class UDPRelay(object):
         if not uid:
             return (None, None)
 
+        '''
         for id in self._relay_rules:
-            if (self._relay_rules[id]['user_id'] == 0 and uid !=
-                    0) or self._relay_rules[id]['user_id'] == uid:
+            if self._relay_rules[id]['user_id'] == 0 or self._relay_rules[
+                    id]['user_id'] == uid:
                 has_higher_priority = False
                 for priority_id in self._relay_rules:
                     if (
@@ -395,7 +405,7 @@ class UDPRelay(object):
                             self._relay_rules[priority_id]['priority'] == self._relay_rules[id]['priority'] and self._relay_rules[id]['id'] > self._relay_rules[priority_id]['id'])) and (
                             self._relay_rules[priority_id]['user_id'] == uid or self._relay_rules[priority_id]['user_id'] == 0):
                         has_higher_priority = True
-                        continue
+                        break
 
                 if has_higher_priority:
                     continue
@@ -409,6 +419,21 @@ class UDPRelay(object):
                     port = self._relay_rules[id]['port']
 
                 return (self._relay_rules[id]['dist_ip'], int(port))
+        '''
+
+        match_rule = None
+        if uid in self._relay_rules:
+            match_rule = self._relay_rules[uid]
+        elif 0 in self._relay_rules:
+            match_rule = self._relay_rules[0]
+
+        if match_rule is not None and match_rule['dist_ip'] != '0.0.0.0':
+            if match_rule['port'] == 0:
+                port = self._listen_port
+            else:
+                port = match_rule['port']
+
+            return (match_rule['dist_ip'], int(port))
         return (None, None)
 
     def _handel_mu_relay(self, client_address, ogn_data, uid):
